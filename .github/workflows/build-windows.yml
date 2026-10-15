@@ -1,0 +1,44 @@
+name: Build Windows driver
+
+on:
+  push:
+    branches: [windows-port, main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure and build
+        shell: pwsh
+        run: |
+          cmake -S . -B build -A x64
+          cmake --build build --config Release
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $out = 'mouselaser-windows'
+          New-Item -ItemType Directory -Path $out | Out-Null
+          Copy-Item -Recurse driver $out\driver
+          Copy-Item install.ps1, uninstall.ps1, packaging\install.bat, packaging\uninstall.bat, packaging\README.txt, LICENSE $out
+          Compress-Archive -Path $out -DestinationPath mouselaser-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mouselaser-windows
+          path: mouselaser-windows.zip
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${{ github.ref_name }}" mouselaser-windows.zip --title "${{ github.ref_name }}" --notes "Windows build. Unzip, then double-click install.bat. See README.txt inside."

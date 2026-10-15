@@ -44,6 +44,8 @@ add_library(driver_mouselaser SHARED src/driver.cpp ${MOUSELASER_COMMON_SOURCES}
 target_include_directories(driver_mouselaser PRIVATE ${OPENVR_HEADERS})
 if(MSVC)
   target_compile_options(driver_mouselaser PRIVATE /W3 /utf-8)
+  # Static CRT, so the DLL doesn't need the Visual C++ Redistributable installed.
+  set_property(TARGET driver_mouselaser PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 else()
   target_compile_options(driver_mouselaser PRIVATE -Wall -Wextra -fvisibility=hidden)
 endif()
