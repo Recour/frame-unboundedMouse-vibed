@@ -3,7 +3,7 @@
 // so the SteamVR laser pointer can be driven by the mouse across every overlay.
 //
 // Toggle with the mouse's forward side button (BTN_EXTRA by default). While active the
-// mouse is grabbed (EVIOCGRAB) so gamescope stops seeing it; while inactive the device
+// mouse is grabbed (see mouse_reader_*.cpp) so the desktop stops seeing it; while inactive the device
 // stays connected (so the compositor keeps it as a pointer source), but parks its ray
 // pointing at the sky and releases every button.
 // It is a stylus while off, so it never takes a real controller's hand slot, and switches to
@@ -11,10 +11,12 @@
 //
 // EXPERIMENTAL and AI-generated ("vibecoded"); see README.md before relying on it.
 
+#define _USE_MATH_DEFINES // M_PI on MSVC
 #include <openvr_driver.h>
 
+#include "mouse_reader.h"
+
 #include <algorithm>
-#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <cstdarg>
@@ -22,21 +24,19 @@
 #include <cstring>
 #include <mutex>
 #include <string>
-#include <thread>
 
-#include <dirent.h>
-#include <fcntl.h>
-#include <linux/input.h>
-#include <poll.h>
-#include <sys/ioctl.h>
-#include <unistd.h>
+#if defined(_WIN32)
+#define MOUSELASER_EXPORT extern "C" __declspec(dllexport)
+#else
+#define MOUSELASER_EXPORT extern "C" __attribute__((visibility("default")))
+#endif
 
 using namespace vr;
 
 static const char *k_section = "driver_mouselaser";
-static const char *k_version = "0.5.1-experimental";
+static const char *k_version = "0.6.0-experimental";
 
-static void Log(const char *fmt, ...)
+void Log(const char *fmt, ...)
 {
     char buf[1024];
     va_list args;
@@ -47,24 +47,18 @@ static void Log(const char *fmt, ...)
         VRDriverLog()->Log(buf);
 }
 
-static bool TestBit(const unsigned long *bits, int bit)
-{
-    const int bpl = sizeof(unsigned long) * 8;
-    return (bits[bit / bpl] >> (bit % bpl)) & 1;
-}
-
 struct Settings
 {
     float sensitivityDeg = 0.05f; // degrees of ray rotation per mouse count
-    int toggleButton = BTN_EXTRA;
-    int backButton = BTN_SIDE;    // sends the compositor's laser "back"; -1 = none
+    int toggleButton = kBtnExtra;
+    int backButton = kBtnSide;    // sends the compositor's laser "back"; -1 = none
     // Stylus (5) gets its own /user/stylus path. A hand role (1/2) shares the slot with the
     // real controller of that hand, so the device disconnects while off (pre-0.5.0 behaviour).
     int role = TrackedControllerRole_Stylus;
     // Role while laser mode is on (0 = keep `role`). The compositor attaches dragged overlays
     // to /user/hand/{left,right} or /user/head only, so a stylus drag follows the head.
     int activeRole = TrackedControllerRole_LeftHand;
-    std::string nameFilter;      // substring of the evdev name; empty = first mouse found
+    std::string nameFilter;      // substring of the mouse device name; empty = first mouse found
     float originOffsetY = -0.08f; // metres, world space, relative to the HMD
     bool invertY = false;
     // How wheel notches drive the virtual thumbstick:
@@ -199,163 +193,6 @@ private:
     std::chrono::steady_clock::time_point m_last, m_lastNotch;
 };
 
-// Reads the physical mouse on its own thread. All state shared with RunFrame is atomic.
-class MouseReader
-{
-public:
-    std::atomic<bool> active{false};
-    std::atomic<bool> toggled{false}; // set on every toggle; RunFrame clears it
-    std::atomic<int> dx{0}, dy{0};
-    std::atomic<int> wheel{0}, hwheel{0};
-    std::atomic<bool> left{false}, right{false}, middle{false}, back{false};
-
-    // Destroying a joinable std::thread calls std::terminate (taking vrserver down),
-    // so make sure the thread is stopped even if Deactivate() was never called.
-    ~MouseReader() { Stop(); }
-
-    void Start(const Settings &s)
-    {
-        m_settings = s;
-        m_run = true;
-        m_thread = std::thread(&MouseReader::Loop, this);
-    }
-
-    void Stop()
-    {
-        m_run = false;
-        if (m_thread.joinable())
-            m_thread.join();
-        Close();
-    }
-
-private:
-    Settings m_settings;
-    std::atomic<bool> m_run{false};
-    std::thread m_thread;
-    int m_fd = -1;
-
-    bool IsMouse(int fd, std::string &name)
-    {
-        unsigned long evbits[(EV_MAX + 1) / (8 * sizeof(long)) + 1] = {};
-        unsigned long relbits[(REL_MAX + 1) / (8 * sizeof(long)) + 1] = {};
-        unsigned long keybits[(KEY_MAX + 1) / (8 * sizeof(long)) + 1] = {};
-        char n[256] = {};
-        if (ioctl(fd, EVIOCGNAME(sizeof(n)), n) < 0) return false;
-        name = n;
-        if (ioctl(fd, EVIOCGBIT(0, sizeof(evbits)), evbits) < 0) return false;
-        if (!TestBit(evbits, EV_REL) || !TestBit(evbits, EV_KEY)) return false;
-        ioctl(fd, EVIOCGBIT(EV_REL, sizeof(relbits)), relbits);
-        ioctl(fd, EVIOCGBIT(EV_KEY, sizeof(keybits)), keybits);
-        if (!TestBit(relbits, REL_X) || !TestBit(relbits, REL_Y) || !TestBit(keybits, BTN_LEFT))
-            return false;
-        return m_settings.nameFilter.empty() || name.find(m_settings.nameFilter) != std::string::npos;
-    }
-
-    bool Open()
-    {
-        DIR *dir = opendir("/dev/input");
-        if (!dir) return false;
-        while (dirent *e = readdir(dir))
-        {
-            if (strncmp(e->d_name, "event", 5) != 0) continue;
-            std::string path = std::string("/dev/input/") + e->d_name;
-            int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_CLOEXEC);
-            if (fd < 0) continue;
-            std::string name;
-            if (IsMouse(fd, name))
-            {
-                m_fd = fd;
-                Log("using %s (%s)\n", path.c_str(), name.c_str());
-                closedir(dir);
-                return true;
-            }
-            close(fd);
-        }
-        closedir(dir);
-        return false;
-    }
-
-    void Close()
-    {
-        if (m_fd >= 0)
-        {
-            ioctl(m_fd, EVIOCGRAB, 0);
-            close(m_fd);
-            m_fd = -1;
-        }
-        SetActive(false);
-    }
-
-    void SetActive(bool on)
-    {
-        if (active == on) return;
-        if (m_fd >= 0 && ioctl(m_fd, EVIOCGRAB, on ? 1 : 0) < 0 && on)
-        {
-            Log("EVIOCGRAB failed (%s), staying inactive\n", strerror(errno));
-            return;
-        }
-        left = right = middle = back = false;
-        dx = dy = wheel = hwheel = 0;
-        active = on;
-        toggled = true;
-        Log("%s\n", on ? "ACTIVE (mouse drives the laser)" : "inactive (mouse back to desktop)");
-    }
-
-    void Loop()
-    {
-        while (m_run)
-        {
-            if (m_fd < 0 && !Open())
-            {
-                for (int i = 0; i < 20 && m_run; i++) usleep(100 * 1000);
-                continue;
-            }
-            pollfd pfd = {m_fd, POLLIN, 0};
-            int r = poll(&pfd, 1, 200);
-            if (r <= 0) continue;
-            if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL))
-            {
-                Log("mouse disappeared\n");
-                Close();
-                continue;
-            }
-            input_event ev;
-            ssize_t n;
-            while ((n = read(m_fd, &ev, sizeof(ev))) == sizeof(ev))
-                Handle(ev);
-            if (n < 0 && errno == ENODEV)
-            {
-                Log("mouse disappeared\n");
-                Close();
-            }
-        }
-    }
-
-    void Handle(const input_event &ev)
-    {
-        if (ev.type == EV_KEY && ev.code == m_settings.toggleButton)
-        {
-            if (ev.value == 1) SetActive(!active);
-            return;
-        }
-        if (!active) return;
-        if (ev.type == EV_REL)
-        {
-            if (ev.code == REL_X) dx += ev.value;
-            else if (ev.code == REL_Y) dy += ev.value;
-            else if (ev.code == REL_WHEEL) wheel += ev.value;
-            else if (ev.code == REL_HWHEEL) hwheel += ev.value;
-        }
-        else if (ev.type == EV_KEY)
-        {
-            if (ev.code == BTN_LEFT) left = ev.value != 0;
-            else if (ev.code == BTN_RIGHT) right = ev.value != 0;
-            else if (ev.code == BTN_MIDDLE) middle = ev.value != 0;
-            else if (ev.code == m_settings.backButton) back = ev.value != 0;
-        }
-    }
-};
-
 class MouseLaserDevice final : public ITrackedDeviceServerDriver
 {
 public:
@@ -388,7 +225,11 @@ public:
         VRDriverInput()->CreateScalarComponent(c, "/input/thumbstick/y", &m_stickY,
                                                VRScalarType_Absolute, VRScalarUnits_NormalizedTwoSided);
 
-        m_mouse.Start(m_settings);
+        MouseReaderConfig cfg;
+        cfg.toggleButton = m_settings.toggleButton;
+        cfg.backButton = m_settings.backButton;
+        cfg.nameFilter = m_settings.nameFilter;
+        m_mouse.Start(cfg);
         Log("activated as device %u, role %d\n", id, m_settings.role);
         return VRInitError_None;
     }
@@ -570,7 +411,7 @@ private:
 
 static MouseLaserProvider g_provider;
 
-extern "C" __attribute__((visibility("default"))) void *HmdDriverFactory(const char *iface, int *ret)
+MOUSELASER_EXPORT void *HmdDriverFactory(const char *iface, int *ret)
 {
     if (strcmp(iface, IServerTrackedDeviceProvider_Version) == 0)
         return &g_provider;
