@@ -34,7 +34,7 @@
 using namespace vr;
 
 static const char *k_section = "driver_mouselaser";
-static const char *k_version = "0.6.0-experimental";
+static const char *k_version = "0.7.0-experimental";
 
 void Log(const char *fmt, ...)
 {
@@ -59,7 +59,17 @@ struct Settings
     // to /user/hand/{left,right} or /user/head only, so a stylus drag follows the head.
     int activeRole = TrackedControllerRole_LeftHand;
     std::string nameFilter;      // substring of the mouse device name; empty = first mouse found
-    float originOffsetY = -0.08f; // metres, world space, relative to the HMD
+    // Where the ray starts, relative to the head, in the head's horizontal frame (metres).
+    // The defaults put it roughly where a hand would hold a controller.
+    float originOffsetX = 0.15f;  // right
+    float originOffsetY = -0.35f; // up (negative = below the head)
+    float originOffsetZ = 0.30f;  // forward
+    // true: the origin is fixed in the room when laser mode turns on, so moving your head
+    // can't move the pointer. false: it follows the head (old behaviour).
+    bool originLatched = true;
+    // On activation the ray aims at the point this far along your gaze, so the pointer starts
+    // where you are looking even though the origin is below your head.
+    float aimDistance = 2.0f;
     bool invertY = false;
     // How wheel notches drive the virtual thumbstick:
     //  smooth: each notch bumps the stick, which eases back to centre; spinning holds it.
@@ -93,6 +103,14 @@ struct Settings
         if (err == VRSettingsError_None) nameFilter = buf;
         f = s->GetFloat(k_section, "originOffsetY", &err);
         if (err == VRSettingsError_None) originOffsetY = f;
+        f = s->GetFloat(k_section, "originOffsetX", &err);
+        if (err == VRSettingsError_None) originOffsetX = f;
+        f = s->GetFloat(k_section, "originOffsetZ", &err);
+        if (err == VRSettingsError_None) originOffsetZ = f;
+        f = s->GetFloat(k_section, "aimDistance", &err);
+        if (err == VRSettingsError_None) aimDistance = f;
+        bool latched = s->GetBool(k_section, "originLatched", &err);
+        if (err == VRSettingsError_None) originLatched = latched;
         bool b = s->GetBool(k_section, "invertY", &err);
         if (err == VRSettingsError_None) invertY = b;
         i = s->GetInt32(k_section, "wheelPressMs", &err);
@@ -281,12 +299,34 @@ public:
                 Log("role %d\n", role);
             }
         }
+        // The ray origin sits below and in front of the head, like a held controller. It is
+        // computed in the head's horizontal frame so head roll and pitch don't move it.
+        auto computeOrigin = [&](float out[3], float hf[3])
+        {
+            float rx = m.m[0][0], rz = m.m[2][0];
+            float len = sqrtf(rx * rx + rz * rz);
+            if (len < 1e-4f) rx = 1, rz = 0, len = 1;
+            rx /= len, rz /= len;
+            hf[0] = rz, hf[1] = 0, hf[2] = -rx; // horizontal forward
+            out[0] = m.m[0][3] + rx * m_settings.originOffsetX + hf[0] * m_settings.originOffsetZ;
+            out[1] = m.m[1][3] + m_settings.originOffsetY;
+            out[2] = m.m[2][3] + rz * m_settings.originOffsetX + hf[2] * m_settings.originOffsetZ;
+        };
+
         if (m_mouse.toggled.exchange(false) && active && hmd.bPoseIsValid)
         {
-            // Start the ray where the user is looking.
+            float hf[3];
+            computeOrigin(m_origin, hf);
+            // Aim at the point aimDistance metres along the gaze, so the pointer starts where
+            // you are looking.
             float fx = -m.m[0][2], fy = -m.m[1][2], fz = -m.m[2][2];
-            m_yaw = atan2f(-fx, -fz);
-            m_pitch = asinf(fmaxf(-1.f, fminf(1.f, fy)));
+            float dx = m.m[0][3] + fx * m_settings.aimDistance - m_origin[0];
+            float dy = m.m[1][3] + fy * m_settings.aimDistance - m_origin[1];
+            float dz = m.m[2][3] + fz * m_settings.aimDistance - m_origin[2];
+            float dl = sqrtf(dx * dx + dy * dy + dz * dz);
+            if (dl < 1e-4f) dx = fx, dy = fy, dz = fz, dl = 1;
+            m_yaw = atan2f(-dx, -dz);
+            m_pitch = asinf(fmaxf(-1.f, fminf(1.f, dy / dl)));
         }
 
         const float k = m_settings.sensitivityDeg * float(M_PI) / 180.f;
@@ -301,9 +341,14 @@ public:
         pose.deviceIsConnected = present;
         pose.poseIsValid = present && hmd.bPoseIsValid;
         pose.result = pose.poseIsValid ? TrackingResult_Running_OK : TrackingResult_Running_OutOfRange;
-        pose.vecPosition[0] = m.m[0][3];
-        pose.vecPosition[1] = m.m[1][3] + m_settings.originOffsetY;
-        pose.vecPosition[2] = m.m[2][3];
+        float origin[3], hfUnused[3];
+        if (active && m_settings.originLatched)
+            std::copy(m_origin, m_origin + 3, origin);
+        else
+            computeOrigin(origin, hfUnused);
+        pose.vecPosition[0] = origin[0];
+        pose.vecPosition[1] = origin[1];
+        pose.vecPosition[2] = origin[2];
         // q = yaw(Y) * pitch(X). While off the ray is parked straight up, where it hits nothing.
         float yaw = active ? m_yaw : 0.f, pitch = active ? m_pitch : float(M_PI) / 2;
         float cy = cosf(yaw / 2), sy = sinf(yaw / 2);
@@ -345,6 +390,7 @@ private:
     std::mutex m_poseMutex;
     DriverPose_t m_pose = {};
     float m_yaw = 0, m_pitch = 0;
+    float m_origin[3] = {0, 0, 0}; // ray origin latched on activation
     StickStepper m_stepX, m_stepY;
     VRInputComponentHandle_t m_trigger = 0, m_triggerValue = 0, m_a = 0, m_b = 0, m_back = 0, m_grip = 0;
     VRInputComponentHandle_t m_stickTouch = 0, m_stickX = 0, m_stickY = 0;

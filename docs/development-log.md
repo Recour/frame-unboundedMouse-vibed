@@ -81,6 +81,8 @@ The broader notes from that session (hardware, display pipeline, KDE scale, ultr
     - **Verified:** the shared code compiles with clang against the v2.5.1 header, and the whole driver cross-compiles with mingw-w64 and exports `HmdDriverFactory`. **Not verified:** MSVC/CMake build, loading in PC SteamVR, whether the compositor takes the virtual device as its laser on PC, whether Raw Input still arrives while the hook swallows the mouse, and the Linux build after the refactor (no Linux machine available for this change).
     - Known gap: games reading Raw Input or DirectInput still see the mouse while laser mode is on.
 
+20. **0.7.0: fixed ray origin** (2026-10-15, first Windows test feedback). Head movement still nudged the pointer and the beam came out of the head. The orientation was already world-locked, but the origin followed the HMD, so head translation shifted the hit point. Now the origin is computed once on activation (head yaw frame, default 0.15 right / 0.35 down / 0.3 forward) and held in the room (`originLatched`), and the initial aim points at the gaze point `aimDistance` metres ahead. Not tested on a headset yet. Also noted: Desktop+'s own "Allow Laser Pointer Override" hides its cursor when the real mouse moves, which matches the "cursor disappears until I click" report. Turn it off in Desktop+.
+
 ## State at hand-off
 - The driver is registered from this repo (`<repo>/driver/mouselaser`). The old prototype registration has been removed.
 - Current version: 0.5.1-experimental, tested on the headset (entry 18).

@@ -126,7 +126,9 @@ Add any of these to `~/.config/openvr/config/steamvr.vrsettings` (Windows: `<Ste
 | `role` | `5` | Role while laser mode is off. 5 = stylus (its own `/user/stylus` path, stays connected, doesn't collide with real controllers). 1 = left hand, 2 = right hand: these share the slot with that real controller and disconnect while off (pre-0.5.0 behaviour). |
 | `activeRole` | `1` | Role while laser mode is on. 1 = left hand, 2 = right hand: needed to drag overlays (a stylus drag follows your head). `0` keeps `role`. While on, the real controller of that hand loses its laser. |
 | `deviceNameFilter` | `""` | Substring of the mouse name. Linux: the evdev name, empty means the first device with REL_X/REL_Y and BTN_LEFT. Windows: the Raw Input device path, case-insensitive, empty means every mouse. |
-| `originOffsetY` | `-0.08` | Ray origin height relative to the HMD, in metres. |
+| `originOffsetX` / `originOffsetY` / `originOffsetZ` | `0.15` / `-0.35` / `0.3` | Where the ray starts relative to your head, in metres: right, up, forward (head yaw only, so tilting your head doesn't move it). The defaults sit roughly where a hand would hold a controller. |
+| `originLatched` | `true` | Fix the ray origin in the room when laser mode turns on, so head movement can't move the pointer. `false` makes the origin follow the head. |
+| `aimDistance` | `2.0` | On activation the ray aims at the point this many metres along your gaze, so the pointer starts where you are looking. |
 | `invertY` | `false` | Invert vertical aim. |
 | `wheelMode` | `"smooth"` | `"smooth"`: each notch bumps the virtual stick, which then eases back, and spinning holds it. `"step"`: each notch is one fixed flick (the 0.2.0 behaviour). |
 | `wheelDeflection` | `1.0` | Maximum stick deflection (0–1), in both modes. |
@@ -168,7 +170,7 @@ If SteamVR won't come up properly after installing, there are four options:
 | Open questions | Does PC SteamVR's compositor pick the virtual stylus/hand as the laser? Does Raw Input keep arriving while the hook swallows the mouse? Does the role switch to left hand apply live with Index controllers connected? |
 
 ## Known limitations
-- The ray starts just below your head (`originOffsetY`) and points where you aim, so you see the beam almost end-on. Expect to rely mostly on the cursor dot on overlays.
+- Before 0.7.0 the ray started just below your head and followed it, so the beam was seen end-on and head movement shifted the pointer. Since 0.7.0 the origin is latched near where a hand would be (see `origin*` settings).
 - While laser mode is on, the **real controller of the `activeRole` hand loses its laser** (the left one by default; confirmed by the owner). It gets it back when laser mode is switched off. Set `activeRole: 2` to borrow the right hand instead. With `role` 1 or 2 this happens whenever the device is connected.
 - With a stylus role active (`activeRole: 0`), the mouse laser can aim and click but **can't drag overlays**: they follow your head. SteamVR's compositor only drags with hands or the head.
 - The driver logs some SteamVR events (`event N device M`) as diagnostics, including a burst of `event 111` lines at startup.
