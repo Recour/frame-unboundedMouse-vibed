@@ -27,6 +27,6 @@ Context for AI coding sessions on this repo. Read it before changing anything.
 ```sh
 cmake -S . -B build -G Ninja && cmake --build build
 ```
-Output: `driver/mouselaser/bin/linuxarm64/driver_mouselaser.so` (gitignored). The only warnings expected come from SteamVR's own `openvr_driver.h` (unused parameters). `build/compile_commands.json` is exported, so clangd can resolve the header.
+Output: `driver/mouselaser/bin/linuxarm64/driver_mouselaser.so` (gitignored). On Windows: `cmake -S . -B build -A x64 && cmake --build build --config Release`, output `bin/win64/driver_mouselaser.dll`. The only warnings expected come from SteamVR's own `openvr_driver.h` (unused parameters). `build/compile_commands.json` is exported, so clangd can resolve the header.
 
 Wheel logic can be checked without a headset: `cmake -S . -B build -DMOUSELASER_TESTS=ON && cmake --build build && ./build/wheel_sim`. Bump `k_version` in `src/driver.cpp` on every behaviour change, so the log (`mouselaser: version ...`) shows which build is running.

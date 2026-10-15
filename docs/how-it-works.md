@@ -1,6 +1,6 @@
 # How the driver works
 
-All code is in [`../src/driver.cpp`](../src/driver.cpp). Everything SteamVR loads lives in [`../driver/mouselaser/`](../driver/mouselaser/).
+The driver is [`../src/driver.cpp`](../src/driver.cpp). Mouse reading lives in [`../src/mouse_reader.cpp`](../src/mouse_reader.cpp) (shared) and `mouse_reader_linux.cpp` / `mouse_reader_win.cpp` (platform). Everything below about `MouseReader` describes the Linux evdev reader. The Windows reader uses Raw Input and a low-level mouse hook, see the README. Everything SteamVR loads lives in [`../driver/mouselaser/`](../driver/mouselaser/).
 
 ## Pieces
 

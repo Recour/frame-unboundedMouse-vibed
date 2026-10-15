@@ -74,6 +74,13 @@ The broader notes from that session (hardware, display pipeline, KDE scale, ultr
     - Observation: SteamVR also sends `event 100`/`101` (TrackedDeviceActivated/Deactivated) for our device on every toggle, even though it stays connected. This was already the case with 0.5.0. We don't know what it means, and it causes no visible problem.
     - The owner confirmed the real **left controller loses its laser while laser mode is on**, as expected: the device holds the left-hand slot. It is fine with laser mode off. `activeRole: 2` moves this to the right hand.
 
+19. **Windows port, 0.6.0** (2026-10-15). Goal: use the driver on PC SteamVR with a Bigscreen Beyond 2 and Index controllers.
+    - Split the mouse reading out of `driver.cpp` into `mouse_reader.{h,cpp}` (shared logic: toggle, buttons, wheel, motion) plus `mouse_reader_linux.cpp` (the old evdev code, unchanged in behaviour apart from ignoring key autorepeat) and `mouse_reader_win.cpp` (new).
+    - Windows input: Raw Input with `RIDEV_INPUTSINK` for deltas, buttons and wheel; a `WH_MOUSE_LL` hook swallows the physical mouse while laser mode is on, and always swallows the toggle button. Button codes stay the evdev numbers on every platform, so settings are portable.
+    - Build: CMake picks the platform file, outputs `bin/win64/driver_mouselaser.dll`, and downloads `openvr_driver.h` (OpenVR SDK v2.5.1) because PC SteamVR doesn't ship it. `install.ps1` / `uninstall.ps1` wrap `vrpathreg`.
+    - **Verified:** the shared code compiles with clang against the v2.5.1 header, and the whole driver cross-compiles with mingw-w64 and exports `HmdDriverFactory`. **Not verified:** MSVC/CMake build, loading in PC SteamVR, whether the compositor takes the virtual device as its laser on PC, whether Raw Input still arrives while the hook swallows the mouse, and the Linux build after the refactor (no Linux machine available for this change).
+    - Known gap: games reading Raw Input or DirectInput still see the mouse while laser mode is on.
+
 ## State at hand-off
 - The driver is registered from this repo (`<repo>/driver/mouselaser`). The old prototype registration has been removed.
 - Current version: 0.5.1-experimental, tested on the headset (entry 18).
