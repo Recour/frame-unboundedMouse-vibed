@@ -83,6 +83,8 @@ The broader notes from that session (hardware, display pipeline, KDE scale, ultr
 
 20. **0.7.0: fixed ray origin** (2026-10-15, first Windows test feedback). Head movement still nudged the pointer and the beam came out of the head. The orientation was already world-locked, but the origin followed the HMD, so head translation shifted the hit point. Now the origin is computed once on activation (head yaw frame, default 0.15 right / 0.35 down / 0.3 forward) and held in the room (`originLatched`), and the initial aim points at the gaze point `aimDistance` metres ahead. Not tested on a headset yet. Also noted: Desktop+'s own "Allow Laser Pointer Override" hides its cursor when the real mouse moves, which matches the "cursor disappears until I click" report. Turn it off in Desktop+.
 
+21. **0.7.1: origin back at the head** (2026-10-15). The owner found the head-level origin is what makes Desktop+ place new windows facing them, so the `origin*` defaults are back to 0 / -0.08 / 0. The latch stays on (head movement no longer moves the pointer). Open: making the beam less visible. Which SteamVR setting controls it on PC is unknown, so we're checking SteamVR's own `default.vrsettings` on the PC.
+
 ## State at hand-off
 - The driver is registered from this repo (`<repo>/driver/mouselaser`). The old prototype registration has been removed.
 - Current version: 0.5.1-experimental, tested on the headset (entry 18).

@@ -34,7 +34,7 @@
 using namespace vr;
 
 static const char *k_section = "driver_mouselaser";
-static const char *k_version = "0.7.0-experimental";
+static const char *k_version = "0.7.1-experimental";
 
 void Log(const char *fmt, ...)
 {
@@ -60,10 +60,11 @@ struct Settings
     int activeRole = TrackedControllerRole_LeftHand;
     std::string nameFilter;      // substring of the mouse device name; empty = first mouse found
     // Where the ray starts, relative to the head, in the head's horizontal frame (metres).
-    // The defaults put it roughly where a hand would hold a controller.
-    float originOffsetX = 0.15f;  // right
-    float originOffsetY = -0.35f; // up (negative = below the head)
-    float originOffsetZ = 0.30f;  // forward
+    // The defaults put it just below the head: Desktop+ places new windows facing the laser's
+    // origin, so a head-level origin makes them face you.
+    float originOffsetX = 0.0f;   // right
+    float originOffsetY = -0.08f; // up (negative = below the head)
+    float originOffsetZ = 0.0f;   // forward
     // true: the origin is fixed in the room when laser mode turns on, so moving your head
     // can't move the pointer. false: it follows the head (old behaviour).
     bool originLatched = true;
